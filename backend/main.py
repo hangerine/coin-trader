@@ -14,7 +14,11 @@ from trader import place_order, get_balance
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Bithumb Trading API")
+app = FastAPI(
+    title="Bithumb Trading API",
+    docs_url="/api/docs",
+    openapi_url="/api/openapi.json",
+)
 
 # CORS
 origins = ["http://localhost:5173", "http://localhost:3000"]
@@ -33,6 +37,11 @@ def get_db():
         yield db
     finally:
         db.close()
+
+# Health check endpoint (used by container/ops to verify service availability)
+@app.get("/api/health")
+def health():
+    return {"status": "ok"}
 
 # Pydantic Models
 class TradeRequest(BaseModel):
@@ -65,15 +74,16 @@ def on_startup():
 
 @app.get("/api/market/current")
 def get_current_market(db: Session = Depends(get_db)):
-    latest = db.query(PriceLog).order_by(PriceLog.timestamp.desc()).first()
+    # Use primary key ordering to avoid issues when system clock drifts
+    latest = db.query(PriceLog).order_by(PriceLog.id.desc()).first()
     if not latest:
         return {"btc_price": 0, "usd_krw_rate": 0, "timestamp": None}
     return latest
 
 @app.get("/api/market/history")
 def get_market_history(limit: int = 100, db: Session = Depends(get_db)):
-    # Get last N records
-    history = db.query(PriceLog).order_by(PriceLog.timestamp.desc()).limit(limit).all()
+    # Get last N records by insertion order to avoid timestamp ordering issues
+    history = db.query(PriceLog).order_by(PriceLog.id.desc()).limit(limit).all()
     return list(reversed(history)) # Return in chronological order
 
 @app.get("/api/trades")
@@ -176,7 +186,7 @@ def get_key_balance(key_id: int, db: Session = Depends(get_db)):
 @app.get("/api/prices")
 def get_current_prices(db: Session = Depends(get_db)):
     """Get current prices for BTC, USDT and exchange rate"""
-    latest = db.query(PriceLog).order_by(PriceLog.timestamp.desc()).first()
+    latest = db.query(PriceLog).order_by(PriceLog.id.desc()).first()
     if not latest:
         return {
             "btc_price": 0,

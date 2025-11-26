@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { LineChart, Line, XAxis, YAxis, Tooltip } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 
 const CoinCard = ({ data, coinKey, coinName, color }) => {
@@ -51,38 +51,37 @@ const CoinCard = ({ data, coinKey, coinName, color }) => {
             </div>
 
             {/* Chart */}
-            <div style={{ width: '100%', height: '80px' }}>
+            <div style={{ width: '100%', height: '120px' }}>
                 {chartData.length >= 2 ? (
-                    <LineChart
-                        width={400}
-                        height={80}
-                        data={chartData}
-                        margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
-                    >
-                        <XAxis dataKey="time" hide />
-                        <YAxis hide domain={['auto', 'auto']} />
-                        <Tooltip
-                            contentStyle={{
-                                backgroundColor: '#1E2329',
-                                border: '1px solid #F0B90B',
-                                borderRadius: '6px',
-                                color: '#EAECEF',
-                                fontSize: '11px',
-                                padding: '8px'
-                            }}
-                            labelFormatter={(value) => new Date(value).toLocaleTimeString()}
-                            formatter={(value) => [value.toLocaleString() + ' KRW', '']}
-                        />
-                        <Line
-                            type="monotone"
-                            dataKey="value"
-                            stroke={color}
-                            strokeWidth={2}
-                            dot={false}
-                            isAnimationActive={true}
-                            animationDuration={500}
-                        />
-                    </LineChart>
+                    <ResponsiveContainer width="100%" height="100%">
+                        <LineChart
+                            data={chartData}
+                            margin={{ top: 0, right: 4, left: 0, bottom: 0 }}
+                        >
+                            <XAxis dataKey="time" hide />
+                            <YAxis hide domain={['auto', 'auto']} />
+                            <Tooltip
+                                contentStyle={{
+                                    backgroundColor: '#1E2329',
+                                    border: '1px solid #F0B90B',
+                                    borderRadius: '6px',
+                                    color: '#EAECEF',
+                                    fontSize: '11px',
+                                    padding: '8px'
+                                }}
+                                labelFormatter={(value) => new Date(value).toLocaleTimeString()}
+                                formatter={(value) => [value.toLocaleString() + ' KRW', '']}
+                            />
+                            <Line
+                                type="monotone"
+                                dataKey="value"
+                                stroke={color}
+                                strokeWidth={2}
+                                dot={false}
+                                isAnimationActive={false}
+                            />
+                        </LineChart>
+                    </ResponsiveContainer>
                 ) : (
                     <div className="h-full flex items-center justify-center">
                         <div className="text-[#848E9C] text-xs">Loading...</div>

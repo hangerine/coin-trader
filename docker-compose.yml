@@ -15,8 +15,14 @@ services:
       - "5173:5173"
     volumes:
       - ./frontend:/app
-      - /app/node_modules # Prevent local node_modules from overwriting container's
+      - frontend_node_modules:/app/node_modules
     environment:
-      - VITE_API_URL=http://localhost:8000
+      - VITE_API_URL=http://localhost:8000 # works from browser and container on macOS/Windows
+      - CHOKIDAR_USEPOLLING=true # ensure file changes on host are detected inside container
     depends_on:
       - backend
+    command: >
+      sh -c "if [ ! -d node_modules ]; then npm ci; fi && npm run dev -- --host"
+
+volumes:
+  frontend_node_modules:
