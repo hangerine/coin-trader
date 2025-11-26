@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+sqlalchemy
+pydantic
+apscheduler
+requests
+python-multipart
+pyjwt
