@@ -1,9 +1,13 @@
-import React, { useEffect, useState } from 'react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 
 const CoinCard = ({ data, coinKey, coinName, color }) => {
     const [chartData, setChartData] = useState([]);
+    const [viewWindow, setViewWindow] = useState({ start: 0, end: 0 });
+    const [isDragging, setIsDragging] = useState(false);
+    const lastMouseX = useRef(0);
+    const chartRef = useRef(null);
 
     useEffect(() => {
         if (!Array.isArray(data)) return;
@@ -17,7 +21,92 @@ const CoinCard = ({ data, coinKey, coinName, color }) => {
             .sort((a, b) => a.time - b.time);
 
         setChartData(processed);
+        
+        // 초기에는 최근 50개 데이터 보여주기 (없으면 전체)
+        const initialViewSize = Math.min(processed.length, 50);
+        setViewWindow({
+            start: Math.max(0, processed.length - initialViewSize),
+            end: Math.max(0, processed.length - 1)
+        });
     }, [data, coinKey]);
+
+    const handleMouseDown = (e) => {
+        setIsDragging(true);
+        lastMouseX.current = e.clientX;
+    };
+
+    const handleMouseMove = (e) => {
+        if (!isDragging || chartData.length === 0) return;
+        
+        const deltaX = e.clientX - lastMouseX.current;
+        lastMouseX.current = e.clientX;
+
+        const chartWidth = e.currentTarget.clientWidth;
+        const currentCount = viewWindow.end - viewWindow.start + 1;
+        if (currentCount <= 1) return;
+
+        // 픽셀당 인덱스 이동량 계산 (감도 조절)
+        const pixelsPerIndex = chartWidth / currentCount;
+        const moveCount = Math.round(-deltaX / pixelsPerIndex);
+
+        if (moveCount === 0) return;
+
+        let newStart = viewWindow.start + moveCount;
+        let newEnd = viewWindow.end + moveCount;
+
+        // 왼쪽 경계 체크
+        if (newStart < 0) {
+            newStart = 0;
+            newEnd = currentCount - 1;
+        }
+        // 오른쪽 경계 체크
+        if (newEnd >= chartData.length) {
+            newEnd = chartData.length - 1;
+            newStart = newEnd - currentCount + 1;
+            if (newStart < 0) newStart = 0;
+        }
+
+        setViewWindow({ start: newStart, end: newEnd });
+    };
+
+    const handleMouseUp = () => setIsDragging(false);
+    const handleMouseLeave = () => setIsDragging(false);
+
+    const handleWheel = (e) => {
+        e.preventDefault();
+        if (chartData.length === 0) return;
+
+        const currentLength = viewWindow.end - viewWindow.start + 1;
+        const zoomFactor = 0.1; // 10% 씩 줌
+        const delta = e.deltaY > 0 ? 1 : -1; // 양수면 축소(범위증가), 음수면 확대(범위감소)
+        
+        let newLength = currentLength + (currentLength * zoomFactor * delta);
+        // 최소 5개, 최대 전체 데이터
+        newLength = Math.max(5, Math.min(chartData.length, newLength));
+
+        const center = (viewWindow.start + viewWindow.end) / 2;
+        let newStart = Math.round(center - (newLength / 2));
+        let newEnd = Math.round(center + (newLength / 2));
+
+        // 범위 보정
+        if (newStart < 0) {
+            newStart = 0;
+            newEnd = Math.min(chartData.length - 1, Math.round(newLength) - 1);
+        }
+        if (newEnd >= chartData.length) {
+            newEnd = chartData.length - 1;
+            newStart = Math.max(0, newEnd - Math.round(newLength) + 1);
+        }
+
+        setViewWindow({ start: newStart, end: newEnd });
+    };
+
+    const displayedData = useMemo(() => {
+        if (!chartData.length) return [];
+        const s = Math.max(0, viewWindow.start);
+        const e = Math.min(chartData.length - 1, viewWindow.end);
+        return chartData.slice(s, e + 1);
+    }, [chartData, viewWindow]);
 
     const latestPrice = chartData.length > 0 ? chartData[chartData.length - 1].value : 0;
     const startPrice = chartData.length > 0 ? chartData[0].value : 0;
@@ -51,14 +140,32 @@ const CoinCard = ({ data, coinKey, coinName, color }) => {
             </div>
 
             {/* Chart */}
-            <div style={{ width: '100%', height: '120px' }}>
-                {chartData.length >= 2 ? (
+            <div 
+                className="cursor-crosshair select-none"
+                style={{ width: '100%', height: '200px' }}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseLeave}
+                onWheel={handleWheel}
+            >
+                {displayedData.length >= 2 ? (
                     <ResponsiveContainer width="100%" height="100%">
                         <LineChart
-                            data={chartData}
-                            margin={{ top: 0, right: 4, left: 0, bottom: 0 }}
+                            data={displayedData}
+                            margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
                         >
-                            <XAxis dataKey="time" hide />
+                            <CartesianGrid stroke="#2B3139" strokeDasharray="3 3" vertical={false} />
+                            <XAxis 
+                                dataKey="time" 
+                                type="number"
+                                domain={['dataMin', 'dataMax']}
+                                tickFormatter={(ts) => new Date(ts).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
+                                tick={{ fill: '#848E9C', fontSize: 10 }}
+                                axisLine={{ stroke: '#2B3139' }}
+                                tickLine={{ stroke: '#2B3139' }}
+                                minTickGap={30}
+                            />
                             <YAxis hide domain={['auto', 'auto']} />
                             <Tooltip
                                 contentStyle={{
