@@ -8,6 +8,7 @@ services:
       - /app/venv # Prevent local venv from overwriting container's python env
     environment:
       - PYTHONUNBUFFERED=1
+      - TZ=Asia/Seoul
 
   frontend:
     build: ./frontend
@@ -19,6 +20,7 @@ services:
     environment:
       - VITE_API_URL=http://localhost:8000 # works from browser and container on macOS/Windows
       - CHOKIDAR_USEPOLLING=true # ensure file changes on host are detected inside container
+      - TZ=Asia/Seoul
     depends_on:
       - backend
     command: >
