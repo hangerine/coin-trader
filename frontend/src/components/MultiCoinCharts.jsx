@@ -1,13 +1,12 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { TrendingUp, TrendingDown } from 'lucide-react';
+import { TrendingUp, TrendingDown, Globe } from 'lucide-react';
 
-const CoinCard = ({ data, coinKey, coinName, color }) => {
+const CoinCard = ({ data, coinKey, binanceKey, korbitKey, coinName, color }) => {
     const [chartData, setChartData] = useState([]);
     const [viewWindow, setViewWindow] = useState({ start: 0, end: 0 });
     const [isDragging, setIsDragging] = useState(false);
     const lastMouseX = useRef(0);
-    const chartRef = useRef(null);
 
     useEffect(() => {
         if (!Array.isArray(data)) return;
@@ -15,20 +14,24 @@ const CoinCard = ({ data, coinKey, coinName, color }) => {
         const processed = data
             .map(d => ({
                 time: new Date(d.timestamp).getTime(),
-                value: parseFloat(d[coinKey]) || 0
+                value: parseFloat(d[coinKey]) || 0,
+                // Binance (USDT) -> Flat or Nested check
+                binanceValue: d[binanceKey] !== undefined ? parseFloat(d[binanceKey]) : (d.binance && d.binance[coinName.toLowerCase()] ? parseFloat(d.binance[coinName.toLowerCase()]) : 0),
+                // Korbit (KRW) -> Flat or Nested check
+                korbitValue: d[korbitKey] !== undefined ? parseFloat(d[korbitKey]) : (d.korbit && d.korbit[coinName.toLowerCase()] ? parseFloat(d.korbit[coinName.toLowerCase()]) : 0),
+                rate: parseFloat(d.usd_krw_rate) || 1300
             }))
             .filter(d => d.value > 0)
             .sort((a, b) => a.time - b.time);
 
         setChartData(processed);
         
-        // 초기에는 최근 50개 데이터 보여주기 (없으면 전체)
         const initialViewSize = Math.min(processed.length, 50);
         setViewWindow({
             start: Math.max(0, processed.length - initialViewSize),
             end: Math.max(0, processed.length - 1)
         });
-    }, [data, coinKey]);
+    }, [data, coinKey, binanceKey, korbitKey, coinName]);
 
     const handleMouseDown = (e) => {
         setIsDragging(true);
@@ -45,7 +48,6 @@ const CoinCard = ({ data, coinKey, coinName, color }) => {
         const currentCount = viewWindow.end - viewWindow.start + 1;
         if (currentCount <= 1) return;
 
-        // 픽셀당 인덱스 이동량 계산 (감도 조절)
         const pixelsPerIndex = chartWidth / currentCount;
         const moveCount = Math.round(-deltaX / pixelsPerIndex);
 
@@ -54,12 +56,10 @@ const CoinCard = ({ data, coinKey, coinName, color }) => {
         let newStart = viewWindow.start + moveCount;
         let newEnd = viewWindow.end + moveCount;
 
-        // 왼쪽 경계 체크
         if (newStart < 0) {
             newStart = 0;
             newEnd = currentCount - 1;
         }
-        // 오른쪽 경계 체크
         if (newEnd >= chartData.length) {
             newEnd = chartData.length - 1;
             newStart = newEnd - currentCount + 1;
@@ -77,18 +77,16 @@ const CoinCard = ({ data, coinKey, coinName, color }) => {
         if (chartData.length === 0) return;
 
         const currentLength = viewWindow.end - viewWindow.start + 1;
-        const zoomFactor = 0.1; // 10% 씩 줌
-        const delta = e.deltaY > 0 ? 1 : -1; // 양수면 축소(범위증가), 음수면 확대(범위감소)
+        const zoomFactor = 0.1; 
+        const delta = e.deltaY > 0 ? 1 : -1; 
         
         let newLength = currentLength + (currentLength * zoomFactor * delta);
-        // 최소 5개, 최대 전체 데이터
         newLength = Math.max(5, Math.min(chartData.length, newLength));
 
         const center = (viewWindow.start + viewWindow.end) / 2;
         let newStart = Math.round(center - (newLength / 2));
         let newEnd = Math.round(center + (newLength / 2));
 
-        // 범위 보정
         if (newStart < 0) {
             newStart = 0;
             newEnd = Math.min(chartData.length - 1, Math.round(newLength) - 1);
@@ -108,8 +106,20 @@ const CoinCard = ({ data, coinKey, coinName, color }) => {
         return chartData.slice(s, e + 1);
     }, [chartData, viewWindow]);
 
-    const latestPrice = chartData.length > 0 ? chartData[chartData.length - 1].value : 0;
+    const latestRecord = chartData.length > 0 ? chartData[chartData.length - 1] : null;
+    const latestPrice = latestRecord ? latestRecord.value : 0;
     const startPrice = chartData.length > 0 ? chartData[0].value : 0;
+    
+    // Binance & Premium Calc
+    const binancePriceUSD = latestRecord ? latestRecord.binanceValue : 0;
+    const korbitPriceKRW = latestRecord ? latestRecord.korbitValue : 0;
+    const exchangeRate = latestRecord ? latestRecord.rate : 1300;
+    
+    const binancePriceKRW = binancePriceUSD * exchangeRate;
+    
+    const binancePremium = binancePriceKRW > 0 ? ((latestPrice - binancePriceKRW) / binancePriceKRW) * 100 : 0;
+    const korbitPremium = korbitPriceKRW > 0 ? ((latestPrice - korbitPriceKRW) / korbitPriceKRW) * 100 : 0;
+
     const priceChange = latestPrice - startPrice;
     const percentChange = startPrice > 0 ? (priceChange / startPrice) * 100 : 0;
     const isPositive = priceChange >= 0;
@@ -131,18 +141,56 @@ const CoinCard = ({ data, coinKey, coinName, color }) => {
                 )}
             </div>
 
-            {/* Price */}
+            {/* Price & Premium */}
             <div className="mb-3">
                 <div className="text-[#EAECEF] font-bold text-xl font-mono">
                     {latestPrice > 0 ? latestPrice.toLocaleString() : '---'}
+                    <span className="text-[#848E9C] text-xs ml-1">KRW</span>
                 </div>
-                <div className="text-[#848E9C] text-xs">KRW</div>
+                
+                <div className="mt-2 space-y-1 border-t border-slate-700/50 pt-2">
+                    {/* Binance Info */}
+                    {binancePriceKRW > 0 && (
+                        <div className="flex justify-between items-end text-[11px]">
+                            <div className="flex items-center gap-1 text-[#848E9C]">
+                                <Globe size={10} />
+                                <span>Binance</span>
+                            </div>
+                            <div className="text-right">
+                                <span className="text-slate-400 font-mono mr-2">
+                                    ≈ {parseInt(binancePriceKRW).toLocaleString()}
+                                </span>
+                                <span className={`font-bold ${binancePremium > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                    {binancePremium > 0 ? '+' : ''}{binancePremium.toFixed(2)}%
+                                </span>
+                            </div>
+                        </div>
+                    )}
+                    
+                    {/* Korbit Info */}
+                    {korbitPriceKRW > 0 && (
+                        <div className="flex justify-between items-end text-[11px]">
+                            <div className="flex items-center gap-1 text-[#848E9C]">
+                                <Globe size={10} />
+                                <span>Korbit</span>
+                            </div>
+                            <div className="text-right">
+                                <span className="text-slate-400 font-mono mr-2">
+                                    {parseInt(korbitPriceKRW).toLocaleString()}
+                                </span>
+                                <span className={`font-bold ${korbitPremium > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                    {korbitPremium > 0 ? '+' : ''}{korbitPremium.toFixed(2)}%
+                                </span>
+                            </div>
+                        </div>
+                    )}
+                </div>
             </div>
 
             {/* Chart */}
             <div 
                 className="cursor-crosshair select-none"
-                style={{ width: '100%', height: '200px' }}
+                style={{ width: '100%', height: '160px' }}
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
@@ -201,12 +249,12 @@ const CoinCard = ({ data, coinKey, coinName, color }) => {
 
 const MultiCoinCharts = ({ data }) => {
     const coins = [
-        { key: 'btc_price', name: 'BTC', color: '#F0B90B' },
-        { key: 'eth_price', name: 'ETH', color: '#627EEA' },
-        { key: 'xrp_price', name: 'XRP', color: '#FFFFFF' },
-        { key: 'sol_price', name: 'SOL', color: '#14F195' },
-        { key: 'usdt_price', name: 'USDT', color: '#26A17B' },
-        { key: 'doge_price', name: 'DOGE', color: '#C2A633' }
+        { key: 'btc_price', binanceKey: 'btc_binance', korbitKey: 'btc_korbit', name: 'BTC', color: '#F0B90B' },
+        { key: 'eth_price', binanceKey: 'eth_binance', korbitKey: 'eth_korbit', name: 'ETH', color: '#627EEA' },
+        { key: 'xrp_price', binanceKey: 'xrp_binance', korbitKey: 'xrp_korbit', name: 'XRP', color: '#FFFFFF' },
+        { key: 'sol_price', binanceKey: 'sol_binance', korbitKey: 'sol_korbit', name: 'SOL', color: '#14F195' },
+        { key: 'usdt_price', binanceKey: 'usdt_binance', korbitKey: 'usdt_korbit', name: 'USDT', color: '#26A17B' },
+        { key: 'doge_price', binanceKey: 'doge_binance', korbitKey: 'doge_korbit', name: 'DOGE', color: '#C2A633' }
     ];
 
     return (
@@ -233,6 +281,8 @@ const MultiCoinCharts = ({ data }) => {
                         key={coin.key}
                         data={data || []}
                         coinKey={coin.key}
+                        binanceKey={coin.binanceKey}
+                        korbitKey={coin.korbitKey}
                         coinName={coin.name}
                         color={coin.color}
                     />

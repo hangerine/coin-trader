@@ -4,12 +4,12 @@ import { Trash2, Plus } from 'lucide-react';
 
 const KeyManager = ({ keys, onUpdate, showToast }) => {
     const [isAdding, setIsAdding] = useState(false);
-    const [newKey, setNewKey] = useState({ name: '', access_key: '', secret_key: '' });
+    const [newKey, setNewKey] = useState({ exchange: 'bithumb', name: '', access_key: '', secret_key: '' });
 
     const handleAdd = async () => {
         try {
             await api.addKey(newKey);
-            setNewKey({ name: '', access_key: '', secret_key: '' });
+            setNewKey({ exchange: 'bithumb', name: '', access_key: '', secret_key: '' });
             setIsAdding(false);
             onUpdate();
             showToast('API Key added successfully', 'success');
@@ -44,6 +44,42 @@ const KeyManager = ({ keys, onUpdate, showToast }) => {
             {isAdding && (
                 <div className="mb-4 p-4 bg-slate-900/50 rounded-lg border border-slate-600 space-y-3">
                     <div>
+                        <label className="block text-xs text-slate-400 mb-1">Exchange</label>
+                        <div className="flex gap-2">
+                            <button
+                                className={`flex-1 py-2 rounded text-sm font-medium border-2 transition-colors ${
+                                    newKey.exchange === 'bithumb' 
+                                    ? 'bg-emerald-900/30 border-emerald-500 text-emerald-400' 
+                                    : 'bg-slate-800 border-slate-600 text-slate-400 hover:bg-slate-700'
+                                }`}
+                                onClick={() => setNewKey({ ...newKey, exchange: 'bithumb' })}
+                            >
+                                Bithumb
+                            </button>
+                            <button
+                                className={`flex-1 py-2 rounded text-sm font-medium border-2 transition-colors ${
+                                    newKey.exchange === 'binance' 
+                                    ? 'bg-yellow-900/30 border-yellow-500 text-yellow-400' 
+                                    : 'bg-slate-800 border-slate-600 text-slate-400 hover:bg-slate-700'
+                                }`}
+                                onClick={() => setNewKey({ ...newKey, exchange: 'binance' })}
+                            >
+                                Binance
+                            </button>
+                            <button
+                                className={`flex-1 py-2 rounded text-sm font-medium border-2 transition-colors ${
+                                    newKey.exchange === 'korbit' 
+                                    ? 'bg-blue-900/30 border-blue-500 text-blue-400' 
+                                    : 'bg-slate-800 border-slate-600 text-slate-400 hover:bg-slate-700'
+                                }`}
+                                onClick={() => setNewKey({ ...newKey, exchange: 'korbit' })}
+                            >
+                                Korbit
+                            </button>
+                        </div>
+                    </div>
+
+                    <div>
                         <label className="block text-xs text-slate-400 mb-1">Account Name</label>
                         <input
                             placeholder="e.g. Main Account"
@@ -55,7 +91,7 @@ const KeyManager = ({ keys, onUpdate, showToast }) => {
                     <div>
                         <label className="block text-xs text-slate-400 mb-1">Access Key (API Key)</label>
                         <input
-                            placeholder="Enter your Bithumb access key"
+                            placeholder="Enter your API key"
                             className="w-full bg-slate-800 border-2 border-slate-600 focus:border-emerald-500 rounded p-2.5 text-sm text-white placeholder-slate-500 transition-colors font-mono"
                             value={newKey.access_key}
                             onChange={e => setNewKey({ ...newKey, access_key: e.target.value })}
@@ -65,7 +101,7 @@ const KeyManager = ({ keys, onUpdate, showToast }) => {
                         <label className="block text-xs text-slate-400 mb-1">Secret Key</label>
                         <input
                             type="password"
-                            placeholder="Enter your Bithumb secret key"
+                            placeholder="Enter your Secret key"
                             className="w-full bg-slate-800 border-2 border-slate-600 focus:border-emerald-500 rounded p-2.5 text-sm text-white placeholder-slate-500 transition-colors font-mono"
                             value={newKey.secret_key}
                             onChange={e => setNewKey({ ...newKey, secret_key: e.target.value })}
@@ -85,8 +121,19 @@ const KeyManager = ({ keys, onUpdate, showToast }) => {
                 {keys.map(k => (
                     <div key={k.id} className="flex justify-between items-center bg-slate-900 p-3 rounded border border-slate-800">
                         <div>
-                            <p className="font-medium text-slate-200">{k.name}</p>
-                            <p className="text-xs text-slate-500">{k.access_key_masked}</p>
+                            <div className="flex items-center gap-2">
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase ${
+                                    (k.exchange || 'bithumb') === 'binance' 
+                                    ? 'bg-yellow-500/20 text-yellow-500 border border-yellow-500/30' 
+                                    : (k.exchange === 'korbit'
+                                        ? 'bg-blue-500/20 text-blue-500 border border-blue-500/30'
+                                        : 'bg-emerald-500/20 text-emerald-500 border border-emerald-500/30')
+                                }`}>
+                                    {k.exchange || 'BITHUMB'}
+                                </span>
+                                <p className="font-medium text-slate-200">{k.name}</p>
+                            </div>
+                            <p className="text-xs text-slate-500 mt-0.5">{k.access_key_masked}</p>
                         </div>
                         <button
                             onClick={() => handleDelete(k.id)}

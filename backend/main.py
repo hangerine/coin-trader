@@ -9,6 +9,8 @@ import logging
 from models import Base, engine, SessionLocal, PriceLog, TradeLog, APIKey, init_db
 from scheduler import start_scheduler
 from trader import place_order, get_balance
+from binance_trader import place_binance_order, get_binance_balance
+from korbit_trader import get_korbit_balance, place_korbit_order
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
@@ -51,12 +53,14 @@ class TradeRequest(BaseModel):
     coin: str = "BTC"
 
 class KeyCreate(BaseModel):
+    exchange: str = "bithumb"
     name: str
     access_key: str
     secret_key: str
 
 class KeyResponse(BaseModel):
     id: int
+    exchange: str
     name: str
     access_key_masked: str
 
@@ -98,68 +102,166 @@ def execute_trade(request: TradeRequest, db: Session = Depends(get_db)):
     if not key:
         raise HTTPException(status_code=404, detail="API Key not found")
 
+    exchange = (key.exchange or "bithumb").strip().lower()
+    logger.info(f"Executing Trade - Exchange: {exchange}, Coin: {request.coin}, Side: {request.side}, Amount: {request.amount}")
+
     # Execute Trade
     try:
-        trade_units = request.amount
-        
         # Get Current Price for Volume Calculation (Sell) or Logging
         latest_price = db.query(PriceLog).order_by(PriceLog.timestamp.desc()).first()
         
-        # Map coin to price field
-        price_map = {
-            "BTC": latest_price.btc_price if latest_price else 0,
-            "ETH": latest_price.eth_price if latest_price else 0,
-            "XRP": latest_price.xrp_price if latest_price else 0,
-            "SOL": latest_price.sol_price if latest_price else 0,
-            "USDT": latest_price.usdt_price if latest_price else 0,
-            "DOGE": latest_price.doge_price if latest_price else 0,
-        }
-        current_price = price_map.get(request.coin.upper(), 0)
+        response = {}
+        exec_price = 0.0
+        trade_amount_coin = 0.0
+        trade_amount_fiat = 0.0
 
-        if request.side == 'ask':
+        if exchange == 'binance':
+            # Binance Logic
+            binance_price_map = {
+                "BTC": latest_price.btc_binance,
+                "ETH": latest_price.eth_binance,
+                "XRP": latest_price.xrp_binance,
+                "SOL": latest_price.sol_binance,
+                "DOGE": latest_price.doge_binance,
+            }
+            current_price = binance_price_map.get(request.coin.upper(), 0)
             if current_price <= 0:
-                 raise HTTPException(status_code=400, detail=f"Current price for {request.coin} not found")
+                raise HTTPException(status_code=400, detail="Current Binance price unavailable")
             
-            # Convert KRW amount to Coin Volume for Market Sell
-            # e.g. 5000 KRW / 100,000,000 KRW/BTC = 0.00005 BTC
-            trade_units = request.amount / current_price
-            # Bithumb requires specific precision (usually 4 decimal places for major coins)
-            trade_units = float("{:.4f}".format(trade_units)) 
+            # Determine Quantity based on Side
+            # BUY: Amount is USDT -> quoteOrderQty
+            # SELL: Amount is USDT -> convert to Coin Qty -> quantity
+            trade_qty = request.amount
+            if request.side != 'bid': # SELL
+                trade_qty = request.amount / current_price
+                # Binance default precision safety (usually 5-6 decimals is safe for major coins)
+                # LOT_SIZE failure often means too many decimals. Try 4 decimals.
+                trade_qty = float("{:.4f}".format(trade_qty))
             
-            logger.info(f"SELL Calculation: {request.amount} KRW / {current_price} Price = {trade_units} Units")
+            logger.info(f"Binance Order Request: Coin={request.coin}, Side={request.side}, Amount={request.amount} USDT, CalcQty={trade_qty}")
+            
+            response = place_binance_order(
+                key.access_key,
+                key.secret_key,
+                request.coin,
+                "BUY" if request.side == 'bid' else "SELL",
+                trade_qty,
+                "MARKET"
+            )
+            
+            logger.info(f"Binance Order Response: {response}")
+            
+            if "status" in response and response["status"] == "error":
+                 error_msg = response.get('msg') or response.get('message') or response.get('error') or str(response)
+                 raise Exception(f"Binance API Error: {error_msg}")
+            
+            exec_price = current_price
+            trade_amount_fiat = request.amount # USDT Value
+            trade_amount_coin = trade_qty # Coin Amount (already calculated above)
 
-            if trade_units <= 0:
-                min_krw = current_price * 0.0001
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"Order amount too small ({trade_units} units). Minimum 0.0001 units required (approx. {int(min_krw)} KRW)."
-                )
+        elif exchange == 'korbit':
+            # Korbit Logic
+            kor_price_map = {
+                "BTC": latest_price.btc_korbit,
+                "ETH": latest_price.eth_korbit,
+                "XRP": latest_price.xrp_korbit,
+                "SOL": latest_price.sol_korbit,
+                "DOGE": latest_price.doge_korbit,
+            }
+            current_price = kor_price_map.get(request.coin.upper(), 0)
+            if current_price <= 0:
+                raise HTTPException(status_code=400, detail="Current Korbit price unavailable")
+            
+            # Calculate Qty for Limit Order
+            # User provides KRW amount for both Buy and Sell intent in this App's UI flow
+            trade_qty = request.amount / current_price
+            trade_qty = float("{:.6f}".format(trade_qty))
+            
+            logger.info(f"Korbit Order Request: Coin={request.coin}, Price={current_price}, AmountKRW={request.amount}, Qty={trade_qty}")
 
-        # For 'bid' (buy), trade_units is KRW amount. For 'ask' (sell), it is Coin volume.
-        response = place_order(
-            key.access_key, 
-            key.secret_key, 
-            request.coin, 
-            "KRW", 
-            trade_units, 
-            request.side
-        )
-        
-        if "status" in response and response["status"] != "0000":
-             raise Exception(f"Bithumb API Error: {response}")
-        
-        if "error" in response:
-             raise Exception(f"Bithumb API Error: {response['error']}")
+            if trade_qty <= 0:
+                raise HTTPException(status_code=400, detail="Order amount too small")
+            
+            symbol = f"{request.coin.lower()}_krw"
+            response = place_korbit_order(
+                key.access_key,
+                key.secret_key,
+                symbol,
+                "buy" if request.side == 'bid' else "sell",
+                int(current_price),
+                trade_qty,
+                "limit"
+            )
+            
+            logger.info(f"Korbit Order Response: {response}")
+
+            if "status" in response and response["status"] == "error":
+                 raise Exception(f"Korbit API Error: {response.get('message')}")
+            
+            exec_price = current_price
+            trade_amount_coin = trade_qty
+            trade_amount_fiat = request.amount
+
+        else:
+            # Bithumb Logic
+            trade_units = request.amount
+            
+            # Map coin to price field
+            price_map = {
+                "BTC": latest_price.btc_price if latest_price else 0,
+                "ETH": latest_price.eth_price if latest_price else 0,
+                "XRP": latest_price.xrp_price if latest_price else 0,
+                "SOL": latest_price.sol_price if latest_price else 0,
+                "USDT": latest_price.usdt_price if latest_price else 0,
+                "DOGE": latest_price.doge_price if latest_price else 0,
+            }
+            current_price = price_map.get(request.coin.upper(), 0)
+    
+            if request.side == 'ask':
+                if current_price <= 0:
+                     raise HTTPException(status_code=400, detail=f"Current price for {request.coin} not found")
+                
+                # Convert KRW amount to Coin Volume for Market Sell
+                trade_units = request.amount / current_price
+                trade_units = float("{:.4f}".format(trade_units)) 
+                
+                logger.info(f"SELL Calculation: {request.amount} KRW / {current_price} Price = {trade_units} Units")
+    
+                if trade_units <= 0:
+                    min_krw = current_price * 0.0001
+                    raise HTTPException(
+                        status_code=400, 
+                        detail=f"Order amount too small ({trade_units} units). Minimum 0.0001 units required (approx. {int(min_krw)} KRW)."
+                    )
+    
+            # For 'bid' (buy), trade_units is KRW amount. For 'ask' (sell), it is Coin volume.
+            response = place_order(
+                key.access_key, 
+                key.secret_key, 
+                request.coin, 
+                "KRW", 
+                trade_units, 
+                request.side
+            )
+            
+            if "status" in response and response["status"] != "0000":
+                 raise Exception(f"Bithumb API Error: {response}")
+            
+            if "error" in response:
+                 raise Exception(f"Bithumb API Error: {response['error']}")
+
+            exec_price = current_price
+            trade_amount_fiat = request.amount
+            trade_amount_coin = trade_units if request.side == 'ask' else request.amount / exec_price if exec_price > 0 else 0
 
         # Log Trade
-        exec_price = current_price
-        
         trade_log = TradeLog(
+            exchange=exchange,
             side=request.side,
-            amount_krw=request.amount if request.side == 'bid' else request.amount, # Approx KRW value
-            amount_btc=trade_units if request.side == 'ask' else request.amount / exec_price if exec_price > 0 else 0, # Approx Coin amount
+            amount_krw=trade_amount_fiat, 
+            amount_btc=trade_amount_coin, 
             price=exec_price,
-            order_id=response.get("order_id", "unknown"),
+            order_id=response.get("order_id") or response.get("orderId") or "unknown",
             timestamp=datetime.now()
         )
         db.add(trade_log)
@@ -177,6 +279,7 @@ def get_keys(db: Session = Depends(get_db)):
     return [
         KeyResponse(
             id=k.id, 
+            exchange=k.exchange or "bithumb",
             name=k.name, 
             access_key_masked=f"{k.access_key[:4]}...{k.access_key[-4:]}"
         ) for k in keys
@@ -189,7 +292,12 @@ def add_key(key: KeyCreate, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Key name already exists")
     
-    new_key = APIKey(name=key.name, access_key=key.access_key, secret_key=key.secret_key)
+    new_key = APIKey(
+        exchange=key.exchange,
+        name=key.name, 
+        access_key=key.access_key, 
+        secret_key=key.secret_key
+    )
     db.add(new_key)
     db.commit()
     return {"status": "success", "id": new_key.id}
@@ -211,8 +319,15 @@ def get_key_balance(key_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="API Key not found")
     
     try:
-        balance = get_balance(key.access_key, key.secret_key)
-        return {"status": "success", "data": balance}
+        if key.exchange == 'binance':
+            balance = get_binance_balance(key.access_key, key.secret_key)
+            logger.info(f"Binance Balance Response: {balance}")
+        elif key.exchange == 'korbit':
+            balance = get_korbit_balance(key.access_key, key.secret_key)
+        else:
+            balance = get_balance(key.access_key, key.secret_key)
+            
+        return {"status": "success", "data": balance.get("data", []) if isinstance(balance, dict) and "data" in balance else balance}
     except Exception as e:
         logger.error(f"Failed to get balance: {e}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -221,17 +336,44 @@ def get_key_balance(key_id: int, db: Session = Depends(get_db)):
 def get_current_prices(db: Session = Depends(get_db)):
     """Get current prices for BTC, USDT and exchange rate"""
     latest = db.query(PriceLog).order_by(PriceLog.id.desc()).first()
+    
     if not latest:
         return {
-            "btc_price": 0,
-            "usdt_price": 0,
-            "usd_krw_rate": 0,
+            "btc_price": 0, "eth_price": 0, "xrp_price": 0, 
+            "sol_price": 0, "usdt_price": 0, "doge_price": 0,
+            "usd_krw_rate": 0, 
+            "binance": {},
+            "korbit": {},
             "timestamp": None
         }
     
     return {
+        # Bithumb Prices
         "btc_price": latest.btc_price,
+        "eth_price": latest.eth_price,
+        "xrp_price": latest.xrp_price,
+        "sol_price": latest.sol_price,
         "usdt_price": latest.usdt_price,
+        "doge_price": latest.doge_price,
+        
+        # Binance Prices
+        "binance": {
+            "btc": latest.btc_binance,
+            "eth": latest.eth_binance,
+            "xrp": latest.xrp_binance,
+            "sol": latest.sol_binance,
+            "doge": latest.doge_binance
+        },
+
+        # Korbit Prices
+        "korbit": {
+            "btc": latest.btc_korbit,
+            "eth": latest.eth_korbit,
+            "xrp": latest.xrp_korbit,
+            "sol": latest.sol_korbit,
+            "doge": latest.doge_korbit
+        },
+        
         "usd_krw_rate": latest.usd_krw_rate,
         "timestamp": latest.timestamp
     }

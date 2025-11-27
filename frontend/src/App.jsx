@@ -95,29 +95,47 @@ function App() {
                 <thead className="text-xs text-slate-400 uppercase bg-slate-900 sticky top-0 z-10">
                   <tr>
                     <th className="px-4 py-3">Time</th>
+                    <th className="px-4 py-3">Exchange</th>
                     <th className="px-4 py-3">Side</th>
                     <th className="px-4 py-3">Price</th>
-                    <th className="px-4 py-3">Amount (BTC)</th>
-                    <th className="px-4 py-3">Total (KRW)</th>
+                    <th className="px-4 py-3">Amount</th>
+                    <th className="px-4 py-3">Total</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {trades.map(t => (
-                    <tr key={t.id} className="border-b border-slate-800 hover:bg-slate-700/50">
-                      <td className="px-4 py-3 text-slate-400">
-                        {new Date(t.timestamp).toLocaleTimeString()}
-                      </td>
-                      <td className={`px-4 py-3 font-medium ${t.side === 'bid' ? 'text-red-400' : 'text-blue-400'}`}>
-                        {t.side.toUpperCase()}
-                      </td>
-                      <td className="px-4 py-3">{t.price.toLocaleString()}</td>
-                      <td className="px-4 py-3">{t.amount_btc.toFixed(6)}</td>
-                      <td className="px-4 py-3">{Math.round(t.amount_krw).toLocaleString()}</td>
-                    </tr>
-                  ))}
+                  {trades.map(t => {
+                    const exchange = (t.exchange || 'bithumb').toLowerCase();
+                    let badgeStyle = "bg-slate-500/20 text-slate-400";
+                    if (exchange === 'bithumb') badgeStyle = "bg-orange-500/20 text-orange-400";
+                    else if (exchange === 'binance') badgeStyle = "bg-yellow-500/20 text-yellow-400";
+                    else if (exchange === 'korbit') badgeStyle = "bg-blue-500/20 text-blue-400";
+                    
+                    const isBinance = exchange === 'binance';
+                    const currency = isBinance ? 'USDT' : 'KRW';
+                    const totalValue = isBinance ? t.amount_krw : Math.round(t.amount_krw);
+
+                    return (
+                      <tr key={t.id} className="border-b border-slate-800 hover:bg-slate-700/50">
+                        <td className="px-4 py-3 text-slate-400">
+                          {new Date(t.timestamp).toLocaleTimeString()}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${badgeStyle}`}>
+                            {exchange}
+                          </span>
+                        </td>
+                        <td className={`px-4 py-3 font-medium ${t.side === 'bid' ? 'text-red-400' : 'text-blue-400'}`}>
+                          {t.side.toUpperCase()}
+                        </td>
+                        <td className="px-4 py-3">{t.price.toLocaleString()}</td>
+                        <td className="px-4 py-3">{t.amount_btc.toFixed(6)}</td>
+                        <td className="px-4 py-3">{totalValue.toLocaleString()} <span className="text-xs text-slate-500">{currency}</span></td>
+                      </tr>
+                    );
+                  })}
                   {trades.length === 0 && (
                     <tr>
-                      <td colSpan="5" className="px-4 py-8 text-center text-slate-500">
+                      <td colSpan="6" className="px-4 py-8 text-center text-slate-500">
                         No trades recorded yet.
                       </td>
                     </tr>

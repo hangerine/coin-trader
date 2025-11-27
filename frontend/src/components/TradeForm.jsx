@@ -26,12 +26,17 @@ const TradeForm = ({ keys, onTrade, showToast }) => {
 
     useEffect(() => {
         if (selectedKey) {
+            setBalance(null); // Reset balance on key change to prevent stale data
             fetchBalance();
         }
         fetchPrices();
         const interval = setInterval(fetchPrices, 5000);
         return () => clearInterval(interval);
     }, [selectedKey]);
+
+    const selectedKeyObj = keys.find(k => k.id == selectedKey);
+    const exchange = selectedKeyObj ? (selectedKeyObj.exchange || 'bithumb') : 'bithumb';
+    const fiatCurrency = exchange === 'binance' ? 'USDT' : 'KRW';
 
     const fetchBalance = async () => {
         if (!selectedKey) return;
@@ -62,9 +67,15 @@ const TradeForm = ({ keys, onTrade, showToast }) => {
 
     const getCoinPrice = (coin) => {
         if (!prices) return 0;
-        if (coin === 'BTC') return prices.btc_price;
-        if (coin === 'USDT') return prices.usdt_price;
-        return 0;
+        
+        if (exchange === 'binance') {
+            if (!prices.binance) return 0;
+            return prices.binance[coin.toLowerCase()] || 0;
+        } else {
+            // Bithumb
+            const key = `${coin.toLowerCase()}_price`;
+            return prices[key] || 0;
+        }
     };
 
     const calculateCoinAmount = () => {
@@ -75,8 +86,10 @@ const TradeForm = ({ keys, onTrade, showToast }) => {
 
     const getAvailableCoins = () => {
         if (!balance) return [];
+        
+        // Filter out the fiat currency (KRW or USDT) to show coin balances
         return balance
-            .filter(b => b.currency !== 'KRW' && parseFloat(b.balance) > 0)
+            .filter(b => b.currency !== fiatCurrency && parseFloat(b.balance) > 0)
             .map(b => ({
                 currency: b.currency,
                 balance: parseFloat(b.balance),
@@ -88,7 +101,7 @@ const TradeForm = ({ keys, onTrade, showToast }) => {
         if (!selectedKey) return showToast('Select an API Key', 'error');
         
         const actionText = side === 'bid' ? '매수(BUY)' : '매도(SELL)';
-        const message = `종목: ${selectedCoin}\n금액: ${parseFloat(amount).toLocaleString()} KRW\n\n정말 주문하시겠습니까?`;
+        const message = `거래소: ${exchange.toUpperCase()}\n종목: ${selectedCoin}\n금액: ${parseFloat(amount).toLocaleString()} ${fiatCurrency}\n\n정말 주문하시겠습니까?`;
         
         setConfirmModal({
             isOpen: true,
@@ -108,7 +121,13 @@ const TradeForm = ({ keys, onTrade, showToast }) => {
                 coin: selectedCoin
             });
             onTrade();
-            fetchBalance(); // Refresh balance after trade
+            fetchBalance(); // Immediate refresh
+            
+            // Delayed refresh for exchange latency
+            setTimeout(() => {
+                fetchBalance();
+            }, 2000);
+            
             showToast(`Trade executed: ${side.toUpperCase()} ${selectedCoin}`, 'success');
         } catch (error) {
             showToast('Trade Failed: ' + (error.response?.data?.detail || error.message));
@@ -117,7 +136,7 @@ const TradeForm = ({ keys, onTrade, showToast }) => {
         }
     };
 
-    const krwBalance = getBalanceForCurrency('KRW');
+    const fiatBalance = getBalanceForCurrency(fiatCurrency);
     const coinAmount = calculateCoinAmount();
     const availableCoins = getAvailableCoins();
 
@@ -137,7 +156,9 @@ const TradeForm = ({ keys, onTrade, showToast }) => {
                     onChange={(e) => setSelectedKey(e.target.value)}
                 >
                     {keys.map(k => (
-                        <option key={k.id} value={k.id}>{k.name} ({k.access_key_masked})</option>
+                        <option key={k.id} value={k.id}>
+                            {k.name} ({k.exchange ? k.exchange.toUpperCase() : 'BITHUMB'} - {k.access_key_masked})
+                        </option>
                     ))}
                 </select>
             </div>
@@ -152,9 +173,9 @@ const TradeForm = ({ keys, onTrade, showToast }) => {
 
                     <div className="space-y-2">
                         <div className="flex justify-between items-center">
-                            <span className="text-sm text-slate-400">KRW</span>
+                            <span className="text-sm text-slate-400">{fiatCurrency}</span>
                             <span className="text-sm font-mono text-white">
-                                {krwBalance.toLocaleString()} KRW
+                                {fiatBalance.toLocaleString()} {fiatCurrency}
                             </span>
                         </div>
 
@@ -166,7 +187,7 @@ const TradeForm = ({ keys, onTrade, showToast }) => {
                                         {coin.balance.toFixed(8)}
                                     </div>
                                     <div className="text-xs text-slate-500">
-                                        ≈ {coin.value.toLocaleString()} KRW
+                                        ≈ {coin.value.toLocaleString()} {fiatCurrency}
                                     </div>
                                 </div>
                             </div>
@@ -213,8 +234,12 @@ const TradeForm = ({ keys, onTrade, showToast }) => {
                     {side === 'bid' ? (
                         // For buying, show all available coins
                         <>
-                            <option value="BTC">BTC (Bitcoin)</option>
-                            <option value="USDT">USDT (Tether)</option>
+                            <option value="BTC">BTC</option>
+                            <option value="ETH">ETH</option>
+                            <option value="XRP">XRP</option>
+                            <option value="SOL">SOL</option>
+                            <option value="DOGE">DOGE</option>
+                            {/* Binance supports USDT pairs for all above. Bithumb supports KRW pairs. */}
                         </>
                     ) : (
                         // For selling, only show coins with balance
@@ -234,15 +259,15 @@ const TradeForm = ({ keys, onTrade, showToast }) => {
             {/* Amount Input */}
             <div>
                 <label className="block text-sm text-slate-400 mb-1">
-                    Amount (KRW)
+                    Amount ({fiatCurrency})
                 </label>
                 <input
                     type="number"
                     className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white"
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
-                    min="5000"
-                    step="1000"
+                    min={exchange === 'binance' ? "10" : "5000"}
+                    step={exchange === 'binance' ? "10" : "1000"}
                 />
                 {coinAmount > 0 && (
                     <div className="mt-1 text-xs text-slate-500">
