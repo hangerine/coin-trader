@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api';
 import { ArrowUpCircle, ArrowDownCircle, Wallet, TrendingUp } from 'lucide-react';
+import ConfirmModal from './ConfirmModal';
 
 const TradeForm = ({ keys, onTrade, showToast }) => {
     const [selectedKey, setSelectedKey] = useState('');
@@ -10,6 +11,12 @@ const TradeForm = ({ keys, onTrade, showToast }) => {
     const [prices, setPrices] = useState(null);
     const [selectedCoin, setSelectedCoin] = useState('BTC');
     const [side, setSide] = useState('bid'); // 'bid' for buy, 'ask' for sell
+    const [confirmModal, setConfirmModal] = useState({
+        isOpen: false,
+        title: '',
+        message: '',
+        type: 'info'
+    });
 
     useEffect(() => {
         if (keys.length > 0 && !selectedKey) {
@@ -77,8 +84,21 @@ const TradeForm = ({ keys, onTrade, showToast }) => {
             }));
     };
 
-    const handleTrade = async () => {
+    const handleTradeClick = () => {
         if (!selectedKey) return showToast('Select an API Key', 'error');
+        
+        const actionText = side === 'bid' ? '매수(BUY)' : '매도(SELL)';
+        const message = `종목: ${selectedCoin}\n금액: ${parseFloat(amount).toLocaleString()} KRW\n\n정말 주문하시겠습니까?`;
+        
+        setConfirmModal({
+            isOpen: true,
+            title: `${actionText} 확인`,
+            message,
+            type: side
+        });
+    };
+
+    const executeTrade = async () => {
         setLoading(true);
         try {
             await api.trade({
@@ -233,7 +253,7 @@ const TradeForm = ({ keys, onTrade, showToast }) => {
 
             {/* Execute Button */}
             <button
-                onClick={handleTrade}
+                onClick={handleTradeClick}
                 disabled={loading || !selectedKey || (side === 'ask' && availableCoins.length === 0)}
                 className={`w-full flex items-center justify-center gap-2 py-3 rounded-lg font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${side === 'bid'
                     ? 'bg-red-500 hover:bg-red-600 text-white'
@@ -252,6 +272,15 @@ const TradeForm = ({ keys, onTrade, showToast }) => {
                     </>
                 )}
             </button>
+
+            <ConfirmModal
+                isOpen={confirmModal.isOpen}
+                onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+                onConfirm={executeTrade}
+                title={confirmModal.title}
+                message={confirmModal.message}
+                type={confirmModal.type}
+            />
         </div>
     );
 };

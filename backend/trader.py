@@ -3,7 +3,11 @@ import hashlib
 import uuid
 import jwt
 import requests
+import urllib3
 from urllib.parse import urlencode
+
+# Disable SSL warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BASE_URL = "https://api.bithumb.com"
 
@@ -40,9 +44,9 @@ def api_request(endpoint, params, api_key, secret_key, method="POST"):
     
     try:
         if method == "POST":
-            response = requests.post(url, json=params, headers=headers)
+            response = requests.post(url, json=params, headers=headers, verify=False)
         else:
-            response = requests.get(url, params=params, headers=headers)
+            response = requests.get(url, params=params, headers=headers, verify=False)
         return response.json()
     except Exception as e:
         return {"status": "error", "message": str(e)}

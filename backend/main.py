@@ -100,13 +100,48 @@ def execute_trade(request: TradeRequest, db: Session = Depends(get_db)):
 
     # Execute Trade
     try:
-        # For 'bid' (buy), amount is KRW. For 'ask' (sell), amount is Coin volume.
+        trade_units = request.amount
+        
+        # Get Current Price for Volume Calculation (Sell) or Logging
+        latest_price = db.query(PriceLog).order_by(PriceLog.timestamp.desc()).first()
+        
+        # Map coin to price field
+        price_map = {
+            "BTC": latest_price.btc_price if latest_price else 0,
+            "ETH": latest_price.eth_price if latest_price else 0,
+            "XRP": latest_price.xrp_price if latest_price else 0,
+            "SOL": latest_price.sol_price if latest_price else 0,
+            "USDT": latest_price.usdt_price if latest_price else 0,
+            "DOGE": latest_price.doge_price if latest_price else 0,
+        }
+        current_price = price_map.get(request.coin.upper(), 0)
+
+        if request.side == 'ask':
+            if current_price <= 0:
+                 raise HTTPException(status_code=400, detail=f"Current price for {request.coin} not found")
+            
+            # Convert KRW amount to Coin Volume for Market Sell
+            # e.g. 5000 KRW / 100,000,000 KRW/BTC = 0.00005 BTC
+            trade_units = request.amount / current_price
+            # Bithumb requires specific precision (usually 4 decimal places for major coins)
+            trade_units = float("{:.4f}".format(trade_units)) 
+            
+            logger.info(f"SELL Calculation: {request.amount} KRW / {current_price} Price = {trade_units} Units")
+
+            if trade_units <= 0:
+                min_krw = current_price * 0.0001
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Order amount too small ({trade_units} units). Minimum 0.0001 units required (approx. {int(min_krw)} KRW)."
+                )
+
+        # For 'bid' (buy), trade_units is KRW amount. For 'ask' (sell), it is Coin volume.
         response = place_order(
             key.access_key, 
             key.secret_key, 
             request.coin, 
             "KRW", 
-            request.amount, 
+            trade_units, 
             request.side
         )
         
@@ -117,13 +152,12 @@ def execute_trade(request: TradeRequest, db: Session = Depends(get_db)):
              raise Exception(f"Bithumb API Error: {response['error']}")
 
         # Log Trade
-        latest_price = db.query(PriceLog).order_by(PriceLog.timestamp.desc()).first()
-        exec_price = latest_price.btc_price if latest_price else 0
+        exec_price = current_price
         
         trade_log = TradeLog(
             side=request.side,
-            amount_krw=request.amount if request.side == 'bid' else request.amount * exec_price, # Approx
-            amount_btc=request.amount / exec_price if request.side == 'bid' else request.amount, # Approx
+            amount_krw=request.amount if request.side == 'bid' else request.amount, # Approx KRW value
+            amount_btc=trade_units if request.side == 'ask' else request.amount / exec_price if exec_price > 0 else 0, # Approx Coin amount
             price=exec_price,
             order_id=response.get("order_id", "unknown"),
             timestamp=datetime.now()
