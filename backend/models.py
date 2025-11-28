@@ -74,4 +74,40 @@ else:
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_db():
+    """Initialize database: create tables and add missing columns"""
     Base.metadata.create_all(bind=engine)
+    
+    # Auto-migrate: Add missing columns for existing tables
+    # This is a simple migration approach. For production, consider using Alembic.
+    from sqlalchemy import inspect, text
+    
+    inspector = inspect(engine)
+    
+    # Check and add missing columns to price_logs
+    if 'price_logs' in inspector.get_table_names():
+        existing_columns = [col['name'] for col in inspector.get_columns('price_logs')]
+        
+        # Define required columns with their types
+        required_columns = {
+            'btc_korbit': 'DOUBLE PRECISION DEFAULT 0.0',
+            'eth_korbit': 'DOUBLE PRECISION DEFAULT 0.0',
+            'xrp_korbit': 'DOUBLE PRECISION DEFAULT 0.0',
+            'sol_korbit': 'DOUBLE PRECISION DEFAULT 0.0',
+            'doge_korbit': 'DOUBLE PRECISION DEFAULT 0.0',
+            'market_data': "JSONB DEFAULT '{}'::jsonb" if not SQLALCHEMY_DATABASE_URL.startswith("sqlite") else "JSON DEFAULT '{}'"
+        }
+        
+        with engine.connect() as conn:
+            for col_name, col_def in required_columns.items():
+                if col_name not in existing_columns:
+                    try:
+                        if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+                            # SQLite doesn't support ALTER TABLE ADD COLUMN with DEFAULT easily
+                            conn.execute(text(f"ALTER TABLE price_logs ADD COLUMN {col_name} {col_def}"))
+                        else:
+                            conn.execute(text(f"ALTER TABLE price_logs ADD COLUMN {col_name} {col_def}"))
+                        conn.commit()
+                        print(f"Added missing column: price_logs.{col_name}")
+                    except Exception as e:
+                        print(f"Warning: Could not add column {col_name}: {e}")
+                        conn.rollback()

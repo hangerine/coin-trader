@@ -7,13 +7,21 @@ const getApiBaseUrl = () => {
         return import.meta.env.VITE_API_URL + '/api';
     }
     
-    // Auto-detect: if running on iptime.org, use same host with port 8000
+    // Auto-detect: if running on iptime.org, calculate backend port
     const hostname = window.location.hostname;
     const protocol = window.location.protocol;
+    const currentPort = window.location.port;
     
     if (hostname.includes('iptime.org') || hostname.includes('localhost') === false) {
-        // Use same hostname but port 8000 for backend
-        return `${protocol}//${hostname}:8000/api`;
+        // If frontend is on port 8089, backend is likely on 8088
+        // If frontend is on port 5173, backend is likely on 8000
+        let backendPort = '8000';
+        if (currentPort === '8089') {
+            backendPort = '8088';
+        } else if (currentPort === '5173' || currentPort === '3000') {
+            backendPort = '8000';
+        }
+        return `${protocol}//${hostname}:${backendPort}/api`;
     }
     
     // Default: localhost

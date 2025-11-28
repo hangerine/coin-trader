@@ -27,7 +27,7 @@ origins = [
     "http://localhost:5173", 
     "http://localhost:3000",
     "http://1109528.iptime.org:8089",
-    "http://1109528.iptime.org:*",  # Allow any port on this host
+    "http://1109528.iptime.org:8088",  # Backend port (for direct access)
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -83,11 +83,15 @@ def on_startup():
 
 @app.get("/api/market/current")
 def get_current_market(db: Session = Depends(get_db)):
-    # Use primary key ordering to avoid issues when system clock drifts
-    latest = db.query(PriceLog).order_by(PriceLog.id.desc()).first()
-    if not latest:
+    try:
+        # Use primary key ordering to avoid issues when system clock drifts
+        latest = db.query(PriceLog).order_by(PriceLog.id.desc()).first()
+        if not latest:
+            return {"btc_price": 0, "usd_krw_rate": 0, "timestamp": None}
+        return latest
+    except Exception as e:
+        logger.error(f"Error in get_current_market: {e}")
         return {"btc_price": 0, "usd_krw_rate": 0, "timestamp": None}
-    return latest
 
 @app.get("/api/market/history")
 def get_market_history(limit: int = 100, db: Session = Depends(get_db)):
