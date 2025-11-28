@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import Column, Integer, String, Float, DateTime, create_engine
+from sqlalchemy import Column, Integer, String, Float, DateTime, create_engine, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
@@ -36,6 +36,9 @@ class PriceLog(Base):
     
     # Exchange Rate
     usd_krw_rate = Column(Float, default=0.0)
+    
+    # Dynamic Market Data (JSON)
+    market_data = Column(JSON, default={})
 
 class TradeLog(Base):
     __tablename__ = "trade_logs"

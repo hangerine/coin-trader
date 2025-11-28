@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import logging
 
 from models import Base, engine, SessionLocal, PriceLog, TradeLog, APIKey, init_db
-from scheduler import start_scheduler
+from scheduler import start_scheduler, get_top_30_coins
 from trader import place_order, get_balance
 from binance_trader import place_binance_order, get_binance_balance
 from korbit_trader import get_korbit_balance, place_korbit_order
@@ -23,7 +23,12 @@ app = FastAPI(
 )
 
 # CORS
-origins = ["http://localhost:5173", "http://localhost:3000"]
+origins = [
+    "http://localhost:5173", 
+    "http://localhost:3000",
+    "http://1109528.iptime.org:8089",
+    "http://1109528.iptime.org:*",  # Allow any port on this host
+]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -344,11 +349,12 @@ def get_current_prices(db: Session = Depends(get_db)):
             "usd_krw_rate": 0, 
             "binance": {},
             "korbit": {},
+            "market_data": {},
             "timestamp": None
         }
     
     return {
-        # Bithumb Prices
+        # Bithumb Prices (Legacy)
         "btc_price": latest.btc_price,
         "eth_price": latest.eth_price,
         "xrp_price": latest.xrp_price,
@@ -356,7 +362,7 @@ def get_current_prices(db: Session = Depends(get_db)):
         "usdt_price": latest.usdt_price,
         "doge_price": latest.doge_price,
         
-        # Binance Prices
+        # Binance Prices (Legacy)
         "binance": {
             "btc": latest.btc_binance,
             "eth": latest.eth_binance,
@@ -365,7 +371,7 @@ def get_current_prices(db: Session = Depends(get_db)):
             "doge": latest.doge_binance
         },
 
-        # Korbit Prices
+        # Korbit Prices (Legacy)
         "korbit": {
             "btc": latest.btc_korbit,
             "eth": latest.eth_korbit,
@@ -375,5 +381,19 @@ def get_current_prices(db: Session = Depends(get_db)):
         },
         
         "usd_krw_rate": latest.usd_krw_rate,
+        "market_data": latest.market_data or {}, # New JSON data
         "timestamp": latest.timestamp
     }
+
+@app.get("/api/coins")
+def get_available_coins():
+    """Get list of available top 30 coins"""
+    coins = get_top_30_coins()
+    if not coins:
+        # Fallback
+        return [
+            {"symbol": "BTC", "name": "Bitcoin"}, {"symbol": "ETH", "name": "Ethereum"},
+            {"symbol": "XRP", "name": "XRP"}, {"symbol": "SOL", "name": "Solana"},
+            {"symbol": "USDT", "name": "Tether"}, {"symbol": "DOGE", "name": "Dogecoin"}
+        ]
+    return coins
