@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { TrendingUp, TrendingDown, Globe, Plus, X } from 'lucide-react';
+import { api } from '../api';
 
 const CoinCard = ({ data, coinKey, coinName, color, onRemove }) => {
     const [chartData, setChartData] = useState([]);
@@ -303,11 +304,10 @@ const MultiCoinCharts = ({ data }) => {
 
     useEffect(() => {
         // Fetch available coins from backend
-        fetch('http://localhost:8000/api/coins')
-            .then(res => res.json())
-            .then(data => {
-                if (Array.isArray(data)) {
-                    setAvailableCoins(data);
+        api.getCoins()
+            .then(res => {
+                if (Array.isArray(res.data)) {
+                    setAvailableCoins(res.data);
                 }
             })
             .catch(err => console.error("Failed to fetch coins:", err));

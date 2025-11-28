@@ -40,4 +40,5 @@ export const api = {
     trade: (data) => axios.post(`${API_BASE_URL}/trade`, data),
     getBalance: (keyId) => axios.get(`${API_BASE_URL}/balance/${keyId}`),
     getPrices: () => axios.get(`${API_BASE_URL}/prices`),
+    getCoins: () => axios.get(`${API_BASE_URL}/coins`),
 };
