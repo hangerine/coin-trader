@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useMemo } from 'react';
+import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { TrendingUp, TrendingDown, Globe, Plus, X } from 'lucide-react';
 
@@ -7,6 +7,7 @@ const CoinCard = ({ data, coinKey, coinName, color, onRemove }) => {
     const [viewWindow, setViewWindow] = useState({ start: 0, end: 0 });
     const [isDragging, setIsDragging] = useState(false);
     const lastMouseX = useRef(0);
+    const chartContainerRef = useRef(null);
 
     useEffect(() => {
         if (!Array.isArray(data)) return;
@@ -91,14 +92,14 @@ const CoinCard = ({ data, coinKey, coinName, color, onRemove }) => {
     const handleMouseUp = () => setIsDragging(false);
     const handleMouseLeave = () => setIsDragging(false);
 
-    const handleWheel = (e) => {
+    const handleWheel = useCallback((e) => {
         e.preventDefault();
         if (chartData.length === 0) return;
 
         const currentLength = viewWindow.end - viewWindow.start + 1;
-        const zoomFactor = 0.1;
-        const delta = e.deltaY > 0 ? 1 : -1;
-
+        const zoomFactor = 0.1; 
+        const delta = e.deltaY > 0 ? 1 : -1; 
+        
         let newLength = currentLength + (currentLength * zoomFactor * delta);
         newLength = Math.max(5, Math.min(chartData.length, newLength));
 
@@ -116,7 +117,19 @@ const CoinCard = ({ data, coinKey, coinName, color, onRemove }) => {
         }
 
         setViewWindow({ start: newStart, end: newEnd });
-    };
+    }, [chartData.length, viewWindow]);
+
+    // Register wheel event listener with passive: false
+    useEffect(() => {
+        const container = chartContainerRef.current;
+        if (!container) return;
+
+        container.addEventListener('wheel', handleWheel, { passive: false });
+
+        return () => {
+            container.removeEventListener('wheel', handleWheel);
+        };
+    }, [handleWheel]);
 
     const displayedData = useMemo(() => {
         if (!chartData.length) return [];
@@ -216,16 +229,16 @@ const CoinCard = ({ data, coinKey, coinName, color, onRemove }) => {
 
             {/* Chart */}
             <div
+                ref={chartContainerRef}
                 className="cursor-crosshair select-none"
-                style={{ width: '100%', height: '160px' }}
+                style={{ width: '100%', height: '160px', minHeight: '160px', minWidth: '0' }}
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
                 onMouseLeave={handleMouseLeave}
-                onWheel={handleWheel}
             >
                 {displayedData.length >= 2 ? (
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" minHeight={160} minWidth={0}>
                         <LineChart
                             data={displayedData}
                             margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
