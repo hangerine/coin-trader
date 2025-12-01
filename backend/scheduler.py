@@ -4,6 +4,7 @@ import urllib3
 import logging
 from models import SessionLocal, PriceLog
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -53,6 +54,11 @@ def get_top_30_coins():
         return top_coins_cache
 
 def fetch_market_data():
+    import time
+    start_time = time.time()
+    step_times = {}
+    step_start = time.time()
+    
     db = SessionLocal()
     try:
         # 1. Fetch USD/KRW exchange rate
@@ -64,9 +70,12 @@ def fetch_market_data():
                 usd_krw_rate = data["rates"]["KRW"]
         except Exception as e:
             logger.warning(f"Error fetching Exchange rate: {e}")
-
+        step_times['exchange_rate'] = time.time() - step_start
+        
         # 2. Get Top 30 Coins
+        step_start = time.time()
         top_coins = get_top_30_coins()
+        step_times['get_coins'] = time.time() - step_start
         if not top_coins:
             # Fallback to default if cache is empty
             top_coins = [
@@ -77,67 +86,113 @@ def fetch_market_data():
 
         market_data = {}
         
-        # 3. Fetch Bithumb prices (KRW)
-        for coin in top_coins:
-            symbol = coin['symbol']
+        # 3. Fetch Bithumb prices (KRW) - Parallel execution for better performance
+        def fetch_bithumb_price(symbol):
+            """Fetch price for a single symbol from Bithumb"""
             try:
-                response = requests.get(f"https://api.bithumb.com/public/ticker/{symbol}_KRW", verify=False, timeout=2)
+                # Reduced timeout from 2s to 1s for faster failure handling
+                response = requests.get(f"https://api.bithumb.com/public/ticker/{symbol}_KRW", verify=False, timeout=1)
                 data = response.json()
                 price = 0.0
                 if data.get("status") == "0000":
                     price = float(data["data"]["closing_price"])
-                
+                return symbol, price
+            except requests.exceptions.Timeout:
+                # Timeout is expected for some coins, return 0.0
+                return symbol, 0.0
+            except Exception as e:
+                # logger.error(f"Error fetching Bithumb {symbol} price: {e}")
+                return symbol, 0.0
+        
+        # Use ThreadPoolExecutor to fetch prices in parallel
+        # Increased max_workers to 30 to fetch all coins simultaneously
+        step_start = time.time()
+        with ThreadPoolExecutor(max_workers=30) as executor:
+            futures = {executor.submit(fetch_bithumb_price, coin['symbol']): coin['symbol'] for coin in top_coins}
+            for future in as_completed(futures):
+                symbol, price = future.result()
                 if symbol not in market_data:
                     market_data[symbol] = {}
                 market_data[symbol]['bithumb'] = price
-                market_data[symbol]['bithumb_krw'] = price # Explicit KRW value
-            except Exception as e:
-                # logger.error(f"Error fetching Bithumb {symbol} price: {e}")
-                if symbol not in market_data: market_data[symbol] = {}
-                market_data[symbol]['bithumb'] = 0.0
+                market_data[symbol]['bithumb_krw'] = price
+        step_times['bithumb_prices'] = time.time() - step_start
 
         # Update USD/KRW if USDT is available on Bithumb
         if usd_krw_rate == 1300.0 and market_data.get('USDT', {}).get('bithumb', 0) > 1000:
             usd_krw_rate = market_data['USDT']['bithumb']
 
-        # 4. Fetch Binance prices (USDT)
-        try:
-            response = requests.get("https://api.binance.com/api/v3/ticker/price", verify=False, timeout=5)
-            data = response.json()
-            binance_map = {item['symbol']: float(item['price']) for item in data if item['symbol'].endswith('USDT')}
+        # 4. Fetch Binance prices (USDT) - with optimized timeout and single retry
+        step_start = time.time()
+        binance_map = {}
+        # Binance API can be slow, use longer timeout but only retry once
+        max_retries = 1  # Reduced from 2 to 1 to avoid long delays
+        for attempt in range(max_retries + 1):  # +1 because we want max_retries retries (0, 1 = 2 attempts total)
+            try:
+                # Increased timeout to 5s as Binance API can be slow
+                response = requests.get("https://api.binance.com/api/v3/ticker/price", verify=False, timeout=5)
+                data = response.json()
+                binance_map = {item['symbol']: float(item['price']) for item in data if item['symbol'].endswith('USDT')}
+                break  # Success, exit retry loop
+            except requests.exceptions.Timeout:
+                if attempt < max_retries:
+                    logger.warning(f"Binance API timeout (attempt {attempt + 1}/{max_retries + 1}), retrying...")
+                    continue
+                else:
+                    logger.warning(f"Binance API timeout after {max_retries + 1} attempts, continuing without Binance data")
+                    # Continue without Binance data rather than blocking
+            except Exception as e:
+                logger.error(f"Error fetching Binance prices: {e}")
+                break  # Don't retry on other errors
+        
+        # Process results even if some requests failed
+        for coin in top_coins:
+            symbol = coin['symbol']
+            binance_symbol = f"{symbol}USDT"
+            price = binance_map.get(binance_symbol, 0.0)
             
-            for coin in top_coins:
-                symbol = coin['symbol']
-                binance_symbol = f"{symbol}USDT"
-                price = binance_map.get(binance_symbol, 0.0)
-                
-                if symbol not in market_data: market_data[symbol] = {}
-                market_data[symbol]['binance'] = price
-                market_data[symbol]['binance_usdt'] = price
-                
-        except Exception as e:
-            logger.error(f"Error fetching Binance prices: {e}")
+            if symbol not in market_data: market_data[symbol] = {}
+            market_data[symbol]['binance'] = price
+            market_data[symbol]['binance_usdt'] = price
+        
+        step_times['binance_prices'] = time.time() - step_start
 
-        # 5. Fetch Korbit prices (KRW)
-        try:
-            response = requests.get("https://api.korbit.co.kr/v1/ticker/detailed/all", verify=False, timeout=5)
-            data = response.json()
+        # 5. Fetch Korbit prices (KRW) - with optimized timeout and single retry
+        step_start = time.time()
+        korbit_data = {}
+        max_retries = 1  # Reduced from 2 to 1 to avoid long delays
+        for attempt in range(max_retries + 1):  # +1 because we want max_retries retries
+            try:
+                # Keep timeout at 3s as Korbit is usually faster
+                response = requests.get("https://api.korbit.co.kr/v1/ticker/detailed/all", verify=False, timeout=3)
+                korbit_data = response.json()
+                break  # Success, exit retry loop
+            except requests.exceptions.Timeout:
+                if attempt < max_retries:
+                    logger.warning(f"Korbit API timeout (attempt {attempt + 1}/{max_retries + 1}), retrying...")
+                    continue
+                else:
+                    logger.warning(f"Korbit API timeout after {max_retries + 1} attempts, continuing without Korbit data")
+                    # Continue without Korbit data rather than blocking
+            except Exception as e:
+                logger.error(f"Error fetching Korbit prices: {e}")
+                break  # Don't retry on other errors
+        
+        # Process results even if some requests failed
+        for coin in top_coins:
+            symbol = coin['symbol']
+            key = f"{symbol.lower()}_krw"
+            price = 0.0
+            if key in korbit_data:
+                price = float(korbit_data[key].get('last', 0))
             
-            for coin in top_coins:
-                symbol = coin['symbol']
-                key = f"{symbol.lower()}_krw"
-                price = 0.0
-                if key in data:
-                    price = float(data[key].get('last', 0))
-                
-                if symbol not in market_data: market_data[symbol] = {}
-                market_data[symbol]['korbit'] = price
-                market_data[symbol]['korbit_krw'] = price
-                
-        except Exception as e:
-            logger.error(f"Error fetching Korbit prices: {e}")
+            if symbol not in market_data: market_data[symbol] = {}
+            market_data[symbol]['korbit'] = price
+            market_data[symbol]['korbit_krw'] = price
+        
+        step_times['korbit_prices'] = time.time() - step_start
 
         # 6. Log to Database
+        step_start = time.time()
         # Maintain backward compatibility for fixed columns
         bithumb_btc = market_data.get('BTC', {}).get('bithumb', 0)
         
@@ -171,14 +226,42 @@ def fetch_market_data():
             )
             db.add(log)
             db.commit()
+            step_times['db_save'] = time.time() - step_start
             
-            logger.info(f"Logged Prices for {len(market_data)} coins.")
+            execution_time = time.time() - start_time
+            logger.info(f"Logged Prices for {len(market_data)} coins. (Total: {execution_time:.2f}s)")
+            logger.info(f"  Breakdown: ExchangeRate={step_times.get('exchange_rate', 0):.2f}s, "
+                       f"GetCoins={step_times.get('get_coins', 0):.2f}s, "
+                       f"Bithumb={step_times.get('bithumb_prices', 0):.2f}s, "
+                       f"Binance={step_times.get('binance_prices', 0):.2f}s, "
+                       f"Korbit={step_times.get('korbit_prices', 0):.2f}s, "
+                       f"DBSave={step_times.get('db_save', 0):.2f}s")
+            
+            # Warn if execution takes longer than 80% of interval (20s * 0.8 = 16s)
+            # Current interval is 20s, execution typically takes ~12-13s
+            if execution_time > 16:
+                logger.warning(f"fetch_market_data took {execution_time:.2f}s, which exceeds 80% of the 20s interval. Consider optimizing or increasing the interval.")
             
     except Exception as e:
         logger.error(f"Error in fetch_market_data: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
         db.close()
 
 def start_scheduler():
-    scheduler.add_job(fetch_market_data, 'interval', seconds=5)
+    # Add job with max_instances=1 to prevent overlapping executions
+    # coalesce=True: If multiple executions are missed, only run once when scheduler catches up
+    # misfire_grace_time: Allow job to run even if it's slightly late
+    # Note: Execution takes ~13-14 seconds (Bithumb: ~1.8s, Binance: ~7-8s, Korbit: ~3s)
+    # Using 20 seconds to provide buffer for network delays and retries
+    scheduler.add_job(
+        fetch_market_data, 
+        'interval', 
+        seconds=20,  # Set to 20s based on actual execution time (~13-14s)
+        max_instances=1,  # Only allow one instance to run at a time
+        coalesce=True,    # If multiple executions are missed, only run once
+        misfire_grace_time=30  # Allow job to run if it's up to 30 seconds late
+    )
     scheduler.start()
+    logger.info("Scheduler started: fetch_market_data will run every 20 seconds")

@@ -51,9 +51,18 @@ axiosInstance.interceptors.request.use(
 axiosInstance.interceptors.response.use(
     (response) => response,
     (error) => {
-        if (error.response && error.response.status === 401) {
+        // Only redirect on 401 if we're not on the login page
+        // Don't redirect for login/token endpoint failures - let the component handle the error
+        const isAuthEndpoint = error.config?.url?.includes('/auth/token') || 
+                              error.config?.url?.includes('/auth/signup') ||
+                              error.config?.url?.includes('/auth/recover');
+        
+        if (error.response && error.response.status === 401 && !isAuthEndpoint) {
             localStorage.removeItem('token');
-            window.location.href = '/'; // Simple redirect to login
+            // Only redirect if we're not already on the login page
+            if (window.location.pathname !== '/') {
+                window.location.href = '/'; // Simple redirect to login
+            }
         }
         return Promise.reject(error);
     }

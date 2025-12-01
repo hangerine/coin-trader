@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { api } from '../api';
-import { User, Lock, Mail, Phone, ArrowRight, Loader2, AlertCircle } from 'lucide-react';
+import { User, Lock, Mail, Phone, ArrowRight, Loader2, AlertCircle, X } from 'lucide-react';
 
 const Login = ({ onLogin }) => {
     const [isLogin, setIsLogin] = useState(true);
@@ -14,6 +14,9 @@ const Login = ({ onLogin }) => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
+    
+    // Use ref to persist error message across re-renders
+    const errorRef = useRef('');
 
     // Admin Secret Trigger
     const [clicks, setClicks] = useState([]);
@@ -49,6 +52,8 @@ const Login = ({ onLogin }) => {
     const handleSubmit = async (e) => {
         e.preventDefault();
         setLoading(true);
+        // Clear previous error only when starting new submission
+        errorRef.current = '';
         setError('');
         setSuccess('');
 
@@ -58,6 +63,8 @@ const Login = ({ onLogin }) => {
                     const res = await api.login(email, password);
                     const token = res.data.access_token;
                     localStorage.setItem('token', token);
+                    // Only call onLogin on successful login
+                    console.log('Login successful, calling onLogin');
                     onLogin(token);
                 } else {
                     const pwdError = validatePassword(password);
@@ -96,20 +103,40 @@ const Login = ({ onLogin }) => {
                 }, 2000);
             }
         } catch (err) {
-            console.error(err);
-            setError(err.response?.data?.detail || 'An error occurred');
-        } finally {
+            console.error('Login error:', err);
+            const errorMessage = err.response?.data?.detail || err.message || 'An error occurred';
+            console.log('Setting error message:', errorMessage);
+            
+            // Store in both state and ref to ensure persistence
+            errorRef.current = errorMessage;
+            setError(errorMessage);
             setLoading(false);
+            
+            // Ensure error stays visible - log for debugging
+            setTimeout(() => {
+                if (errorRef.current && !error) {
+                    console.warn('Error was cleared unexpectedly, restoring it');
+                    setError(errorRef.current);
+                }
+            }, 100);
         }
     };
 
     const toggleView = (v) => {
         setView(v);
-        setError('');
+        // Don't clear error when switching views - let user see it
+        // Keep error in ref as well
         setSuccess('');
         setPhone('');
         setNewPassword('');
     };
+    
+    // Effect to ensure error persists
+    useEffect(() => {
+        if (error && !errorRef.current) {
+            errorRef.current = error;
+        }
+    }, [error]);
 
     return (
         <div className="min-h-screen flex items-center justify-center bg-[#0B0E11] relative overflow-hidden">
@@ -147,10 +174,27 @@ const Login = ({ onLogin }) => {
                     </p>
                 </div>
 
-                {error && (
-                    <div className="mb-6 p-3 bg-red-500/10 border border-red-500/20 rounded-lg flex items-center gap-2 text-red-400 text-sm">
-                        <AlertCircle size={16} />
-                        {error}
+                {(error || errorRef.current) && (
+                    <div 
+                        className="mb-6 p-4 bg-red-500/20 border-2 border-red-500/40 rounded-lg flex items-start gap-3 text-red-300 text-sm shadow-lg shadow-red-500/10"
+                        role="alert"
+                        aria-live="assertive"
+                    >
+                        <AlertCircle size={18} className="flex-shrink-0 mt-0.5 animate-pulse" />
+                        <div className="flex-1">
+                            <p className="font-medium">{error || errorRef.current}</p>
+                        </div>
+                        <button
+                            onClick={() => {
+                                errorRef.current = '';
+                                setError('');
+                            }}
+                            className="flex-shrink-0 text-red-400 hover:text-red-300 transition-colors p-1 hover:bg-red-500/20 rounded"
+                            aria-label="Close error message"
+                            title="Close"
+                        >
+                            <X size={18} />
+                        </button>
                     </div>
                 )}
 
@@ -169,7 +213,10 @@ const Login = ({ onLogin }) => {
                                 type="email"
                                 placeholder="Email Address"
                                 value={email}
-                                onChange={(e) => setEmail(e.target.value)}
+                                onChange={(e) => {
+                                    setEmail(e.target.value);
+                                    // Don't clear error on input change - let user read it
+                                }}
                                 className="w-full bg-[#0B0E11] border border-[#2B3139] rounded-lg py-3 pl-10 pr-4 text-slate-100 focus:outline-none focus:border-emerald-500 transition-colors"
                                 required
                             />
@@ -184,7 +231,10 @@ const Login = ({ onLogin }) => {
                                 type="tel"
                                 placeholder="Phone Number"
                                 value={phone}
-                                onChange={(e) => setPhone(e.target.value)}
+                                onChange={(e) => {
+                                    setPhone(e.target.value);
+                                    // Don't clear error on input change - let user read it
+                                }}
                                 className="w-full bg-[#0B0E11] border border-[#2B3139] rounded-lg py-3 pl-10 pr-4 text-slate-100 focus:outline-none focus:border-emerald-500 transition-colors"
                                 required
                             />
@@ -199,7 +249,10 @@ const Login = ({ onLogin }) => {
                                 type="password"
                                 placeholder="Password"
                                 value={password}
-                                onChange={(e) => setPassword(e.target.value)}
+                                onChange={(e) => {
+                                    setPassword(e.target.value);
+                                    // Don't clear error on input change - let user read it
+                                }}
                                 className="w-full bg-[#0B0E11] border border-[#2B3139] rounded-lg py-3 pl-10 pr-4 text-slate-100 focus:outline-none focus:border-emerald-500 transition-colors"
                                 required
                             />
@@ -214,7 +267,10 @@ const Login = ({ onLogin }) => {
                                 type="password"
                                 placeholder="New Password"
                                 value={newPassword}
-                                onChange={(e) => setNewPassword(e.target.value)}
+                                onChange={(e) => {
+                                    setNewPassword(e.target.value);
+                                    // Don't clear error on input change - let user read it
+                                }}
                                 className="w-full bg-[#0B0E11] border border-[#2B3139] rounded-lg py-3 pl-10 pr-4 text-slate-100 focus:outline-none focus:border-emerald-500 transition-colors"
                                 required
                             />
@@ -242,7 +298,11 @@ const Login = ({ onLogin }) => {
                             <p className="text-slate-400 text-sm">
                                 {isLogin ? "Don't have an account? " : "Already have an account? "}
                                 <button
-                                    onClick={() => { setIsLogin(!isLogin); setError(''); setSuccess(''); }}
+                                    onClick={() => { 
+                                        setIsLogin(!isLogin); 
+                                        // Don't clear error - let user see it if login failed
+                                        setSuccess(''); 
+                                    }}
                                     className="text-emerald-400 hover:text-emerald-300 font-medium"
                                 >
                                     {isLogin ? 'Sign Up' : 'Sign In'}
