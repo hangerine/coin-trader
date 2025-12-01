@@ -6,11 +6,13 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 import logging
 
-from models import Base, engine, SessionLocal, PriceLog, TradeLog, APIKey, init_db
+from models import Base, engine, SessionLocal, PriceLog, TradeLog, APIKey, User, init_db
 from scheduler import start_scheduler, get_top_30_coins
 from trader import place_order, get_balance
 from binance_trader import place_binance_order, get_binance_balance
 from korbit_trader import get_korbit_balance, place_korbit_order
+from routers import auth
+from auth import get_current_user
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
@@ -21,6 +23,8 @@ app = FastAPI(
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
 )
+
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 
 # CORS
 origins = [
@@ -58,16 +62,14 @@ class TradeRequest(BaseModel):
     coin: str = "BTC"
 
 class KeyCreate(BaseModel):
-    exchange: str = "bithumb"
-    name: str
-    access_key: str
-    secret_key: str
+    exchange: str
+    api_key: str
+    api_secret: str
 
 class KeyResponse(BaseModel):
     id: int
     exchange: str
-    name: str
-    access_key_masked: str
+    api_key_masked: str
 
     class Config:
         orm_mode = True
@@ -105,9 +107,9 @@ def get_trades(db: Session = Depends(get_db)):
     return trades
 
 @app.post("/api/trade")
-def execute_trade(request: TradeRequest, db: Session = Depends(get_db)):
+def execute_trade(request: TradeRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     # Get API Key
-    key = db.query(APIKey).filter(APIKey.id == request.key_id).first()
+    key = db.query(APIKey).filter(APIKey.id == request.key_id, APIKey.user_id == current_user.id).first()
     if not key:
         raise HTTPException(status_code=404, detail="API Key not found")
 
@@ -150,8 +152,8 @@ def execute_trade(request: TradeRequest, db: Session = Depends(get_db)):
             logger.info(f"Binance Order Request: Coin={request.coin}, Side={request.side}, Amount={request.amount} USDT, CalcQty={trade_qty}")
             
             response = place_binance_order(
-                key.access_key,
-                key.secret_key,
+                key.api_key,
+                key.api_secret,
                 request.coin,
                 "BUY" if request.side == 'bid' else "SELL",
                 trade_qty,
@@ -193,8 +195,8 @@ def execute_trade(request: TradeRequest, db: Session = Depends(get_db)):
             
             symbol = f"{request.coin.lower()}_krw"
             response = place_korbit_order(
-                key.access_key,
-                key.secret_key,
+                key.api_key,
+                key.api_secret,
                 symbol,
                 "buy" if request.side == 'bid' else "sell",
                 int(current_price),
@@ -245,8 +247,8 @@ def execute_trade(request: TradeRequest, db: Session = Depends(get_db)):
     
             # For 'bid' (buy), trade_units is KRW amount. For 'ask' (sell), it is Coin volume.
             response = place_order(
-                key.access_key, 
-                key.secret_key, 
+                key.api_key, 
+                key.api_secret, 
                 request.coin, 
                 "KRW", 
                 trade_units, 
@@ -283,37 +285,36 @@ def execute_trade(request: TradeRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/keys", response_model=List[KeyResponse])
-def get_keys(db: Session = Depends(get_db)):
-    keys = db.query(APIKey).all()
+def get_keys(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    keys = db.query(APIKey).filter(APIKey.user_id == current_user.id).all()
     return [
         KeyResponse(
             id=k.id, 
             exchange=k.exchange or "bithumb",
-            name=k.name, 
-            access_key_masked=f"{k.access_key[:4]}...{k.access_key[-4:]}"
+            api_key_masked=f"{k.api_key[:4]}...{k.api_key[-4:]}" if k.api_key else "****"
         ) for k in keys
     ]
 
 @app.post("/api/keys")
-def add_key(key: KeyCreate, db: Session = Depends(get_db)):
-    # Simple check if exists
-    existing = db.query(APIKey).filter(APIKey.name == key.name).first()
+def add_key(key: KeyCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # Check if key already exists for this exchange
+    existing = db.query(APIKey).filter(APIKey.exchange == key.exchange, APIKey.user_id == current_user.id).first()
     if existing:
-        raise HTTPException(status_code=400, detail="Key name already exists")
+        raise HTTPException(status_code=400, detail=f"API key for {key.exchange} already exists")
     
     new_key = APIKey(
+        user_id=current_user.id,
         exchange=key.exchange,
-        name=key.name, 
-        access_key=key.access_key, 
-        secret_key=key.secret_key
+        api_key=key.api_key, 
+        api_secret=key.api_secret
     )
     db.add(new_key)
     db.commit()
     return {"status": "success", "id": new_key.id}
 
 @app.delete("/api/keys/{key_id}")
-def delete_key(key_id: int, db: Session = Depends(get_db)):
-    key = db.query(APIKey).filter(APIKey.id == key_id).first()
+def delete_key(key_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    key = db.query(APIKey).filter(APIKey.id == key_id, APIKey.user_id == current_user.id).first()
     if not key:
         raise HTTPException(status_code=404, detail="Key not found")
     db.delete(key)
@@ -321,24 +322,39 @@ def delete_key(key_id: int, db: Session = Depends(get_db)):
     return {"status": "success"}
 
 @app.get("/api/balance/{key_id}")
-def get_key_balance(key_id: int, db: Session = Depends(get_db)):
+def get_key_balance(key_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Get balance for a specific API key"""
-    key = db.query(APIKey).filter(APIKey.id == key_id).first()
+    key = db.query(APIKey).filter(APIKey.id == key_id, APIKey.user_id == current_user.id).first()
     if not key:
+        logger.warning(f"API Key not found: key_id={key_id}, user_id={current_user.id}")
         raise HTTPException(status_code=404, detail="API Key not found")
+    
+    logger.info(f"Fetching balance for exchange={key.exchange}, key_id={key_id}, user_id={current_user.id}")
     
     try:
         if key.exchange == 'binance':
-            balance = get_binance_balance(key.access_key, key.secret_key)
+            balance = get_binance_balance(key.api_key, key.api_secret)
             logger.info(f"Binance Balance Response: {balance}")
         elif key.exchange == 'korbit':
-            balance = get_korbit_balance(key.access_key, key.secret_key)
+            balance = get_korbit_balance(key.api_key, key.api_secret)
+            logger.info(f"Korbit Balance Response: {balance}")
         else:
-            balance = get_balance(key.access_key, key.secret_key)
+            # Bithumb
+            logger.info(f"Calling Bithumb get_balance for key_id={key_id}")
+            balance = get_balance(key.api_key, key.api_secret)
+            logger.info(f"Bithumb Balance Response: {balance}")
+        
+        # Check if balance response indicates an error
+        if isinstance(balance, dict) and balance.get("status") == "error":
+            error_msg = balance.get("message", "Unknown error")
+            logger.error(f"Balance API returned error: {error_msg}")
+            raise HTTPException(status_code=400, detail=error_msg)
             
         return {"status": "success", "data": balance.get("data", []) if isinstance(balance, dict) and "data" in balance else balance}
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to get balance: {e}")
+        logger.error(f"Failed to get balance: {type(e).__name__}: {e}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/prices")

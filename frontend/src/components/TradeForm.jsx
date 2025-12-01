@@ -67,7 +67,7 @@ const TradeForm = ({ keys, onTrade, showToast }) => {
 
     const getCoinPrice = (coin) => {
         if (!prices) return 0;
-        
+
         if (exchange === 'binance') {
             if (!prices.binance) return 0;
             return prices.binance[coin.toLowerCase()] || 0;
@@ -86,7 +86,7 @@ const TradeForm = ({ keys, onTrade, showToast }) => {
 
     const getAvailableCoins = () => {
         if (!balance) return [];
-        
+
         // Filter out the fiat currency (KRW or USDT) to show coin balances
         return balance
             .filter(b => b.currency !== fiatCurrency && parseFloat(b.balance) > 0)
@@ -99,10 +99,10 @@ const TradeForm = ({ keys, onTrade, showToast }) => {
 
     const handleTradeClick = () => {
         if (!selectedKey) return showToast('Select an API Key', 'error');
-        
+
         const actionText = side === 'bid' ? '매수(BUY)' : '매도(SELL)';
         const message = `거래소: ${exchange.toUpperCase()}\n종목: ${selectedCoin}\n금액: ${parseFloat(amount).toLocaleString()} ${fiatCurrency}\n\n정말 주문하시겠습니까?`;
-        
+
         setConfirmModal({
             isOpen: true,
             title: `${actionText} 확인`,
@@ -122,12 +122,12 @@ const TradeForm = ({ keys, onTrade, showToast }) => {
             });
             onTrade();
             fetchBalance(); // Immediate refresh
-            
+
             // Delayed refresh for exchange latency
             setTimeout(() => {
                 fetchBalance();
             }, 2000);
-            
+
             showToast(`Trade executed: ${side.toUpperCase()} ${selectedCoin}`, 'success');
         } catch (error) {
             showToast('Trade Failed: ' + (error.response?.data?.detail || error.message));
@@ -157,7 +157,7 @@ const TradeForm = ({ keys, onTrade, showToast }) => {
                 >
                     {keys.map(k => (
                         <option key={k.id} value={k.id}>
-                            {k.name} ({k.exchange ? k.exchange.toUpperCase() : 'BITHUMB'} - {k.access_key_masked})
+                            {k.exchange ? k.exchange.toUpperCase() : 'BITHUMB'} - {k.api_key_masked}
                         </option>
                     ))}
                 </select>

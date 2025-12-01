@@ -4,9 +4,18 @@ import MultiCoinCharts from './components/MultiCoinCharts';
 import TradeForm from './components/TradeForm';
 import KeyManager from './components/KeyManager';
 import Toast from './components/Toast';
-import { Activity } from 'lucide-react';
+import Login from './components/Login';
+import SettingsModal from './components/SettingsModal';
+import ConfirmationModal from './components/ConfirmationModal';
+import PhoneSetupModal from './components/PhoneSetupModal';
+import { Activity, LogOut, Settings, User } from 'lucide-react';
 
 function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('token'));
+  const [user, setUser] = useState(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
+  const [isPhoneSetupOpen, setIsPhoneSetupOpen] = useState(false);
   const [marketHistory, setMarketHistory] = useState([]);
   const [trades, setTrades] = useState([]);
   const [keys, setKeys] = useState([]);
@@ -46,36 +55,89 @@ function App() {
   };
 
   useEffect(() => {
-    fetchKeys();
-    fetchData();
-    const interval = setInterval(fetchData, 5000); // Poll every 5 seconds
-    return () => clearInterval(interval);
-  }, []);
+    if (isAuthenticated) {
+      fetchKeys();
+      fetchData();
+      api.getMe().then(res => {
+        setUser(res.data);
+        if (!res.data.phone_number) {
+          setIsPhoneSetupOpen(true);
+        }
+      }).catch(console.error);
+      const interval = setInterval(fetchData, 5000); // Poll every 5 seconds
+      return () => clearInterval(interval);
+    }
+  }, [isAuthenticated]);
+
+  const handleLogin = (token) => {
+    setIsAuthenticated(true);
+  };
+
+  const handleLogoutClick = () => {
+    setIsLogoutModalOpen(true);
+  };
+
+  const confirmLogout = () => {
+    localStorage.removeItem('token');
+    setIsAuthenticated(false);
+    setKeys([]);
+    setUser(null);
+    setIsLogoutModalOpen(false);
+  };
+
+  if (!isAuthenticated) {
+    return <Login onLogin={handleLogin} />;
+  }
 
   return (
     <div className="min-h-screen bg-[#0B0E11] text-slate-50 p-6 font-sans">
-      <header className="max-w-7xl mx-auto mb-8 flex items-center gap-3">
-        <Activity className="text-emerald-400" size={32} />
-        <div>
-          <h1 className="text-2xl font-bold bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
-            Bithumb Trader Pro
-          </h1>
-          <p className="text-slate-400 text-sm">Automated Trading Dashboard</p>
+      <header className="max-w-7xl mx-auto mb-8 flex flex-col md:flex-row items-center gap-4 md:gap-3">
+        <div className="flex items-center gap-3 w-full md:w-auto justify-center md:justify-start">
+          <Activity className="text-emerald-400" size={32} />
+          <div>
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
+              Bithumb Trader Pro
+            </h1>
+            <p className="text-slate-400 text-sm">Automated Trading Dashboard</p>
+          </div>
         </div>
-        <div className="ml-auto flex gap-4 text-sm">
-          <div className="bg-[#1E2329] px-4 py-2 rounded-lg border border-[#2B3139]">
+
+        <div className="flex items-center gap-2 w-full md:w-auto justify-center md:ml-auto">
+          {user && (
+            <div className="flex items-center gap-2 mr-2 md:mr-4 bg-[#1E2329] px-3 py-1.5 rounded-lg border border-[#2B3139]">
+              <User size={16} className="text-emerald-400" />
+              <span className="text-sm text-slate-300">{user.email}</span>
+            </div>
+          )}
+          <button
+            onClick={() => setIsSettingsOpen(true)}
+            className="p-2 text-slate-400 hover:text-emerald-400 hover:bg-emerald-400/10 rounded-lg transition-colors"
+            title="Settings"
+          >
+            <Settings size={20} />
+          </button>
+          <button
+            onClick={handleLogoutClick}
+            className="p-2 text-slate-400 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
+            title="Logout"
+          >
+            <LogOut size={20} />
+          </button>
+        </div>
+        <div className="flex flex-col md:flex-row gap-2 md:gap-4 text-sm w-full md:w-auto">
+          <div className="bg-[#1E2329] px-4 py-2 rounded-lg border border-[#2B3139] flex justify-between md:block">
             <span className="text-[#848E9C] block text-xs">BTC Price</span>
             <span className="font-mono text-[#F0B90B] text-lg">
               {currentPrice ? currentPrice.toLocaleString() : '---'} KRW
             </span>
           </div>
-          <div className="bg-[#1E2329] px-4 py-2 rounded-lg border border-[#2B3139]">
+          <div className="bg-[#1E2329] px-4 py-2 rounded-lg border border-[#2B3139] flex justify-between md:block">
             <span className="text-[#848E9C] block text-xs">USDT Price</span>
             <span className="font-mono text-[#0ECB81] text-lg">
               {usdtPrice ? usdtPrice.toLocaleString() : '---'} KRW
             </span>
           </div>
-          <div className="bg-[#1E2329] px-4 py-2 rounded-lg border border-[#2B3139]">
+          <div className="bg-[#1E2329] px-4 py-2 rounded-lg border border-[#2B3139] flex justify-between md:block">
             <span className="text-[#848E9C] block text-xs">USD/KRW</span>
             <span className="font-mono text-[#EAECEF] text-lg">
               {exchangeRate ? exchangeRate.toLocaleString() : '---'}
@@ -109,7 +171,7 @@ function App() {
                     if (exchange === 'bithumb') badgeStyle = "bg-orange-500/20 text-orange-400";
                     else if (exchange === 'binance') badgeStyle = "bg-yellow-500/20 text-yellow-400";
                     else if (exchange === 'korbit') badgeStyle = "bg-blue-500/20 text-blue-400";
-                    
+
                     const isBinance = exchange === 'binance';
                     const currency = isBinance ? 'USDT' : 'KRW';
                     const totalValue = isBinance ? t.amount_krw : Math.round(t.amount_krw);
@@ -159,6 +221,31 @@ function App() {
           onClose={() => setToast(null)}
         />
       )}
+
+      {isSettingsOpen && (
+        <SettingsModal
+          onClose={() => setIsSettingsOpen(false)}
+          onLogout={confirmLogout}
+        />
+      )}
+
+      <ConfirmationModal
+        isOpen={isLogoutModalOpen}
+        onClose={() => setIsLogoutModalOpen(false)}
+        onConfirm={confirmLogout}
+        title="Sign Out"
+        message="Are you sure you want to sign out of your account?"
+        confirmText="Sign Out"
+        confirmStyle="danger"
+      />
+
+      <PhoneSetupModal
+        isOpen={isPhoneSetupOpen}
+        onComplete={(phone) => {
+          setUser({ ...user, phone_number: phone });
+          setIsPhoneSetupOpen(false);
+        }}
+      />
     </div>
   );
 }
